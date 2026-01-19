@@ -17,12 +17,13 @@ function locationData(display_name, lat, lon) {
 app.get('/', function (req, res) {
     res.end('This is a city explorer API');
 });
-function weatherData(city_name, country_code, date, low_temp, high_temp) {
+function weatherData(city_name, country_code, date, low_temp, high_temp,description) {
     this.city_name = city_name;
     this.country_code = country_code;
     this.high_temp = high_temp;
     this.low_temp = low_temp;
     this.date = date;
+    this.description = description;
 }
 app.get('/weather/:city_name', function (req, res) {
     const { city_name } = req.params;
@@ -33,7 +34,9 @@ app.get('/weather/:city_name', function (req, res) {
             "data": weather.data.map(item => ({
                 "date": item.valid_date,
                 "low_temp": item.low_temp,
-                "high_temp": item.high_temp
+                "high_temp": item.high_temp,
+                "description": item.weather.description,
+
             }))
         });
     } else {
