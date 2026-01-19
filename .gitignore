@@ -1,0 +1,7 @@
+.env
+node_modules
+data/location.json
+data/weather.json
+
+package-lock.json
+package.json
