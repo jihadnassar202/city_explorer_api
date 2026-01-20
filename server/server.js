@@ -1,65 +1,86 @@
-const dotenv = require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const app = express();
-const location = require('../data/location.json');
-const weather = require('../data/weather.json');
 const cors = require('cors');
 const PORT = process.env.PORT || 3000;
+app.use(express.json());
 app.use(cors());
 
-function locationData(display_name, lat, lon) {
-    this.display_name = display_name;
-    this.lat = lat;
-    this.lon = lon;
+//WeatherAPI class
+
+function mustenv(name) {
+    if (!process.env[name]) {
+        throw new Error(`Missing environment variable: ${name}`);
+    }
+    return process.env[name];
 }
 
-app.get('/', function (req, res) {
-    res.end('This is a city explorer API');
-});
-function weatherData(city_name, country_code, date, low_temp, high_temp,description) {
-    this.city_name = city_name;
-    this.country_code = country_code;
-    this.high_temp = high_temp;
-    this.low_temp = low_temp;
-    this.date = date;
-    this.description = description;
-}
-app.get('/weather/:city_name', function (req, res) {
+const weatherAPI = mustenv('WEATHER_API_KEY');
+const locationAPI = mustenv('GEOCODE_API_KEY');
+const parkAPI = mustenv('PARK_API_KEY');
+
+app.get('/weather/:city_name', async (req, res) => {
+
     const { city_name } = req.params;
-    if (weather.city_name.toLowerCase() === city_name.toLowerCase()) {
-        return res.json({
-            "city": weather.city_name,
-            "country_code": weather.country_code,
-            "data": weather.data.map(item => ({
-                "date": item.valid_date,
-                "low_temp": item.low_temp,
-                "high_temp": item.high_temp,
-                "description": item.weather.description,
-
-            }))
-        });
-    } else {
-        return res.status(404).json({ error: `Weather for ${city_name} not found` });
+    const weather = await fetch(`https://api.weatherbit.io/v2.0/forecast/daily?city=${city_name}&key=${weatherAPI}`);
+    //check if the weather is found
+    if (weather.status !== 200) {
+        res.status(404).json({ error: 'Weather not found' });
+        return;
     }
-});
+    //return the weather data in the format of the weather.json file
+    const weatherData = await weather.json();
+    res.json({
+        "city": weatherData.city_name,
+        "country_code": weatherData.country_code,
+        "data": weatherData.data.map(item => ({
+            "date": item.valid_date,
+            "low_temp": item.low_temp,
+            "high_temp": item.high_temp,
+            "description": item.weather.description,
+        }))
+    });
 
-app.get('/location/:display_name', function (req, res) {
+});
+app.get('/location/:display_name', async (req, res) => {
     const { display_name } = req.params;
-    const locationData = location.find(item => item.display_name.toLowerCase() === display_name.toLowerCase() && item.lat && item.lon);
-    if (locationData) {
-        return res.json({
-            "city": locationData.display_name,
-            "latitude": locationData.lat,
-            "longitude": locationData.lon
-        });
-    } else {
-        return res.status(404).end('Location not found');
+    const location = await fetch(`https://us1.locationiq.com/v1/search?key=${locationAPI}&q=${display_name}&format=json`);
+    //check if the location is found
+    if (location.status !== 200) {
+        res.status(404).json({ error: 'Location not found' });
+        return;
     }
+    //return the location data in the format of the location.json file
+    const locationData = await location.json();
+    res.json({
+        "city": locationData[0].display_name,
+        "latitude": locationData[0].lat,
+        "longitude": locationData[0].lon,
+    });
 });
 
-app.listen(`${PORT}`, function () {
+app.get('/parks/:state_code/', async (req, res) => {
+    const { state_code } = req.params;
+    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?stateCode=${state_code}&api_key=${parkAPI}`);
+    //error handling
+    if (parks.status !== 200) {
+        res.status(404).json({ error: 'Parks not found' });
+        return;
+    }
+    const parksData = await parks.json();
+    res.json({
+        "data": parksData.data.map(park => ({
+            "name": park.fullName,
+            "address": park.addresses[0].line1,
+            "cost": park.cost,
+            "description": park.description,
+            "url": park.url,
+        }))
+    });
+});
+
+app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-
 
