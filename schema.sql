@@ -1,22 +1,20 @@
- CREATE TABLE IF NOT EXISTS weather (
-    id SERIAL PRIMARY KEY,
-    city VARCHAR(255) NOT NULL,
-    country_code VARCHAR(255) NOT NULL,
-    data JSONB NOT NULL
+ select 1; --test if the database is connected
+ create table parks (
+    id serial primary key,
+    provider text not null default 'nps',
+    name varchar(255) not null,
+    address varchar(255) not null,
+    cost int not null,
+    description text not null,
+    url varchar(255) not null,
+    unique (provider, name, address, url)
  );
 
- CREATE TABLE IF NOT EXISTS location (
-    id SERIAL PRIMARY KEY,
-    city VARCHAR(255) NOT NULL,
-    latitude DECIMAL(10, 8) NOT NULL,
-    longitude DECIMAL(11, 8) NOT NULL
- );
-
- CREATE TABLE IF NOT EXISTS parks (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    address VARCHAR(255) NOT NULL,
-    cost DECIMAL(10, 2) NOT NULL,
-    description TEXT NOT NULL,
-    url VARCHAR(255) NOT NULL
+ create table weather (
+    id serial primary key,
+    provider text not null default 'weatherbit',
+    city varchar(255) not null,
+    country_code varchar(2) not null,
+    data jsonb not null,
+    unique (provider, city, country_code)
  );
