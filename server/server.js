@@ -6,10 +6,12 @@ const cors = require('cors');
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
+const path = require('path');
+app.use(express.static(path.join(__dirname, '../client')));
 
 //WeatherAPI class
 
-function mustenv(name) {
+function mustenv(name) {//this function is used to get the environment variable
     if (!process.env[name]) {
         throw new Error(`Missing environment variable: ${name}`);
     }
@@ -20,32 +22,36 @@ const weatherAPI = mustenv('WEATHER_API_KEY');
 const locationAPI = mustenv('GEOCODE_API_KEY');
 const parkAPI = mustenv('PARK_API_KEY');
 
-app.get('/weather/:city_name', async (req, res) => {
-
-    const { city_name } = req.params;
-    const weather = await fetch(`https://api.weatherbit.io/v2.0/forecast/daily?city=${city_name}&key=${weatherAPI}`);
+app.get('/weather/', async (req, res) => {
+    console.log(req.query);
+    const  city  = req.query.search_query;
+    if (!city) {
+        res.status(400).json({ error: 'City is required' });
+        return;
+    }
+    const weather = await fetch(`https://api.weatherbit.io/v2.0/forecast/daily?city=${city}&key=${weatherAPI}`);
     //check if the weather is found
     if (weather.status !== 200) {
         res.status(404).json({ error: 'Weather not found' });
         return;
     }
+    
     //return the weather data in the format of the weather.json file
     const weatherData = await weather.json();
-    res.json({
-        "city": weatherData.city_name,
-        "country_code": weatherData.country_code,
-        "data": weatherData.data.map(item => ({
-            "date": item.valid_date,
-            "low_temp": item.low_temp,
-            "high_temp": item.high_temp,
-            "description": item.weather.description,
-        }))
-    });
+
+    res.json(weatherData.data.map(item => ({
+        "date": item.valid_date,
+        "forecast": item.weather.description,
+    })));
 
 });
-app.get('/location/:display_name', async (req, res) => {
-    const { display_name } = req.params;
-    const location = await fetch(`https://us1.locationiq.com/v1/search?key=${locationAPI}&q=${display_name}&format=json`);
+app.get('/location/', async (req, res) => {
+    const { city } = req.query;
+    if (!city) {
+        res.status(400).json({ error: 'City is required' });
+        return;
+    }
+    const location = await fetch(`https://us1.locationiq.com/v1/search?key=${locationAPI}&q=${city}&format=json`);
     //check if the location is found
     if (location.status !== 200) {
         res.status(404).json({ error: 'Location not found' });
@@ -57,27 +63,31 @@ app.get('/location/:display_name', async (req, res) => {
         "city": locationData[0].display_name,
         "latitude": locationData[0].lat,
         "longitude": locationData[0].lon,
+        "formatted_query": locationData[0].display_name,
+        "search_query": city,
     });
 });
 
-app.get('/parks/:state_code/', async (req, res) => {
-    const { state_code } = req.params;
-    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?stateCode=${state_code}&api_key=${parkAPI}`);
+app.get('/parks/', async (req, res) => {
+    const search_query  = req.query.search_query;
+    if (!search_query) {
+        res.status(400).json({ error: 'Search query is required' });
+        return;
+    }
+    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?q=${search_query}&api_key=${parkAPI}`);
     //error handling
     if (parks.status !== 200) {
         res.status(404).json({ error: 'Parks not found' });
         return;
     }
     const parksData = await parks.json();
-    res.json({
-        "data": parksData.data.map(park => ({
+    res.json(parksData.data.map(park => ({
             "name": park.fullName,
             "address": park.addresses[0].line1,
-            "cost": park.cost,
+            "fee": park.entranceFees.length > 0 ? park.entranceFees[0].cost : 'Free',
             "description": park.description,
-            "url": park.url,
-        }))
-    });
+            "url": park.url
+        })));
 });
 
 app.listen(PORT, () => {
