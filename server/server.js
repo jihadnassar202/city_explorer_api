@@ -69,12 +69,12 @@ app.get('/location/', async (req, res) => {
 });
 
 app.get('/parks/', async (req, res) => {
-    const search_query  = req.query.search_query;
-    if (!search_query) {
+    const city  = req.query.search_query;
+    if (!city) {
         res.status(400).json({ error: 'Search query is required' });
         return;
     }
-    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?q=${search_query}&api_key=${parkAPI}`);
+    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?q=${city}&api_key=${parkAPI}`);
     //error handling
     if (parks.status !== 200) {
         res.status(404).json({ error: 'Parks not found' });
