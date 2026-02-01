@@ -1,28 +1,13 @@
 require('dotenv').config();
-const { Pool } = require('pg');
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-async function connectToDatabase() {
-    try {
-        await pool.query('select 1');
-        console.log('Connected to the database');
-    } catch (error) {
-        console.error('Error connecting to the database:', error);
-    }
-}
-connectToDatabase();
+const pool = require('../db');  
 const express = require('express');
-const fs = require('fs');
 const app = express();
 const cors = require('cors');
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
-const redis = require('redis');
-const redisClient = redis.createClient();
-redisClient.connect().catch(console.error);
-const DEFAULT_EXPIRATION = 60 * 60 * 24;
-
+const path = require('path');
+app.use(express.static(path.join(__dirname, '../client')));
 function mustenv(name) {
     if (!process.env[name]) {
         throw new Error(`Missing environment variable: ${name}`);
@@ -33,87 +18,135 @@ function mustenv(name) {
 const weatherAPI = mustenv('WEATHER_API_KEY');
 const locationAPI = mustenv('GEOCODE_API_KEY');
 const parkAPI = mustenv('PARK_API_KEY');
-
-app.get('/weather/:city_name', async (req, res) => {
-    const city_name = req.params.city_name.trim().toLowerCase();
-    const weatherDB = await pool.query('select * from weather where provider = $1 and city = $2', ['weatherbit', city_name]);
-    if (weatherDB.rows.length > 0) {
-        return res.json(weatherDB.rows[0]);
+const movieAPI = mustenv('MOVIES_API_KEY');
+// Query parameter routes (from your code)
+app.get('/weather/', async (req, res) => {
+    const city = req.query.search_query;
+    if (!city) {
+        res.status(400).json({ error: 'City is required' });
+        return;
     }
-        const weather = await fetch(`https://api.weatherbit.io/v2.0/forecast/daily?city=${city_name}&key=${weatherAPI}`);
-        if (weather.status !== 200) {
-            res.status(404).json({ error: 'Weather not found' });
-            return;
-        }
-        const weatherData = await weather.json();
-        const formattedWeatherData = {
-            "city": weatherData.city_name,
-            "country_code": weatherData.country_code,
-            "data": weatherData.data.map(item => ({
-                "date": item.valid_date,
-                "low_temp": item.low_temp,
-                "high_temp": item.high_temp,
-                "description": item.weather.description,
-            }))
-        }
-        await pool.query('insert into weather (provider, city, country_code, data) values ($1, $2, $3, $4)', ['weatherbit', city_name, weatherData.country_code, JSON.stringify(formattedWeatherData)]);
-        return res.json(formattedWeatherData);
-    });
-
-app.get('/location/:display_name', async (req, res) => {
-    const { display_name } = req.params;
-    const locationDB = await pool.query('select * from location where provider = $1 and display_name = $2', ['locationiq', display_name]);
-    if (locationDB.rows.length > 0) {
-        return res.json(locationDB.rows[0]);
+    const weatherdb = await pool.query('SELECT * FROM weather WHERE provider = $1 and city = $2', ['weatherbit', city]);
+    if (weatherdb.rows.length > 0) {
+        return res.json(weatherdb.rows[0].data);
+       
     }
-    const location = await fetch(`https://us1.locationiq.com/v1/search?key=${locationAPI}&q=${display_name}&format=json`);
+    const weather = await fetch(`https://api.weatherbit.io/v2.0/forecast/daily?city=${city}&key=${weatherAPI}`);
+    //check if the weather is found
+    if (weather.status !== 200) {
+        res.status(404).json({ error: 'Weather not found' });
+        return;
+    }
+    
+    //return the weather data in the format of the weather.json file
+    const weatherData = await weather.json();
+    formattedWeatherData = weatherData.data.map(item => ({
+        "date": item.valid_date,
+        "forecast": item.weather.description,
+    }));
+    await pool.query('INSERT INTO weather (provider, city, country_code, data) VALUES ($1, $2, $3, $4)', ['weatherbit', city, weatherData.country_code,JSON.stringify(formattedWeatherData)]);
+    return res.json(formattedWeatherData);
+});
+
+app.get('/location/', async (req, res) => {
+    const { city } = req.query;
+        if (!city) {
+        res.status(400).json({ error: 'City is required' });
+        return;
+    }
+    const locationdb = await pool.query('SELECT * FROM location WHERE provider = $1 and search_query = $2', ['locationiq', city]);
+    if (locationdb.rows.length > 0) {
+        return res.json(locationdb.rows[0].data);
+    }
+    
+    const location = await fetch(`https://us1.locationiq.com/v1/search?key=${locationAPI}&q=${city}&format=json`);
+    //check if the location is found
     if (location.status !== 200) {
         res.status(404).json({ error: 'Location not found' });
         return;
     }
+    //return the location data in the format of the location.json file
     const locationData = await location.json();
-    await pool.query('insert into location (provider, display_name, lat, lon) values ($1, $2, $3, $4)', ['locationiq', display_name, locationData[0].lat, locationData[0].lon]);
-    return res.json({
+    if (locationData.length === 0) {
+        res.status(404).json({ error: 'Location not found' });
+        return;
+    }
+    const formattedLocationData = {
         "city": locationData[0].display_name,
         "latitude": locationData[0].lat,
         "longitude": locationData[0].lon,
-    });
+        "formatted_query": locationData[0].display_name,
+        "search_query": city,
+    };
+    await pool.query('INSERT INTO location (provider, search_query, data) VALUES ($1, $2, $3) ON CONFLICT (provider, search_query) DO NOTHING', ['locationiq', city,JSON.stringify(formattedLocationData)]);
+    return res.json(formattedLocationData);
 });
 
-app.get('/parks/:state_code/', async (req, res) => {
-    const { state_code } = req.params;
-    const parksDB = await pool.query('select * from parks where provider = $1 and state_code = $2', ['nps', state_code]);
-    if (parksDB.rows.length > 0) {
-        return res.json(parksDB.rows[0]);
-    }
-    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?stateCode=${state_code}&api_key=${parkAPI}`);
-    //error handling
-    if (parks.status !== 200) {
-        res.status(404).json({ error: 'Parks not found' }); 
+app.get('/parks/', async (req, res) => {
+    const search_query = req.query.search_query;
+    if (!search_query) {
+        res.status(400).json({ error: 'Search query is required' });
         return;
     }
-    const parksData = await parks.json(); 
-    for (const park of parksData.data) {
-        await pool.query(
-            `INSERT INTO parks (provider, name, address, cost, description, url) 
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (provider, url) DO NOTHING`,
-            ['nps', park.fullName, park.addresses[0].line1, 
-             park.cost, park.description, park.url]
-        );
+    const parksdb = await pool.query('SELECT * FROM parks WHERE provider = $1 and search_query = $2', ['nps', search_query]);
+    if (parksdb.rows.length > 0) {
+        return res.json(parksdb.rows[0].data);
     }
-      res.json({
-        "data": parksData.data.map(park => ({
-            "name": park.fullName,
-            "address": park.addresses[0].line1,
-            "cost": park.cost,
-            "description": park.description,
-            "url": park.url,
-        }))
-    });
+    const parks = await fetch(`https://developer.nps.gov/api/v1/parks?q=${search_query}&api_key=${parkAPI}`);
+    //error handling
+    if (!parks.ok) {
+        res.status(404).json({ error: 'Parks not found' });
+        return;
+    }
+    const parksData = await parks.json();
+    if (parksData.data.length === 0) {
+        res.status(404).json({ error: 'Parks not found' });
+        return;
+    }
+   const formattedParksData =parksData.data.map(park => ({
+        "search_query": search_query,
+        "name": park.fullName,
+        "address": park.addresses[0].line1,
+        "fee": park.entranceFees.length > 0 ? park.entranceFees[0].cost : 'Free',
+        "description": park.description,
+        "url": park.url
+    }));
+    await pool.query(
+        'INSERT INTO parks (provider,search_query, data) VALUES ($1, $2, $3) ON CONFLICT (provider, search_query) DO NOTHING',
+        ['nps', search_query,JSON.stringify(formattedParksData)]
+    );
+    return res.json(formattedParksData);
 });
 
+app.get('/movies/', async (req, res) => {
+    const search_query = req.query.search_query;
+    if (!search_query) {
+        res.status(400).json({ error: 'Search query is required' });
+        return;
+    }
+    const moviesdb = await pool.query('SELECT * FROM movies WHERE provider = $1 and search_query = $2', ['themoviedb', search_query]);
+    if (moviesdb.rows.length > 0) {
+        return res.json(moviesdb.rows[0].data);
+    }
+    const movies = await fetch(`https://api.themoviedb.org/3/search/movie?query=${search_query}&api_key=${movieAPI}`);
+    if (movies.status !== 200) {
+        res.status(404).json({ error: 'Movies not found' });
+        return;
+    }
+    const moviesData = await movies.json(); 
+    const formattedMoviesData = moviesData.results.map(movie => ({
+        "title": movie.title,
+        "overview": movie.overview,
+        "average_votes": movie.vote_average,
+        "total_votes": movie.vote_count,
+        "image_url": `https://image.tmdb.org/t/p/w500${movie.poster_path}`,
+        "popularity": movie.popularity,
+        "released_on": movie.release_date,
+    }));
+    await pool.query('INSERT INTO movies (provider, search_query, data) VALUES ($1, $2, $3) ON CONFLICT (provider, search_query) DO NOTHING', ['themoviedb', search_query,JSON.stringify(formattedMoviesData)]);
+    return res.json(formattedMoviesData);
+       
+});
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-
